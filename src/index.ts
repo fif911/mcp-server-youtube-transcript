@@ -24,15 +24,28 @@ import {
   TranscriptLine,
   formatCount,
   TranscriptFetchError,
-  stopAllStreams
+  stopAllStreams,
+  Chapter
 } from './youtube-fetcher.js';
 
 interface TranscriptStructuredResult {
   [key: string]: unknown;
   meta: string;
   content: string;
-  chapters?: string;
   comments?: string;
+}
+
+/**
+ * Formats seconds into h:mm:ss or m:ss timestamp string
+ */
+function formatTimestamp(totalSeconds: number): string {
+  totalSeconds = Math.floor(totalSeconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    : `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 // Define tool configurations
@@ -231,7 +244,7 @@ class YouTubeTranscriptExtractor {
   /**
    * Retrieves transcript for a given video ID and language
    */
-  async getTranscript(videoId: string, lang: string, includeTimestamps: boolean, stripAds: boolean): Promise<{
+  async getTranscript(videoId: string, lang: string, includeTimestamps: boolean, stripAds: boolean, includeChapters: boolean = true): Promise<{
     text: string;
     actualLang: string;
     availableLanguages: string[];
@@ -276,7 +289,7 @@ class YouTubeTranscriptExtractor {
       }
 
       return {
-        text: this.formatTranscript(lines, includeTimestamps),
+        text: this.formatTranscript(lines, includeTimestamps, includeChapters ? result.chapters : []),
         actualLang: result.actualLang,
         availableLanguages: result.availableLanguages.map(t => t.languageCode),
         adsStripped,
@@ -297,29 +310,52 @@ class YouTubeTranscriptExtractor {
   }
 
   /**
-   * Formats transcript lines into readable text
+   * Formats transcript lines with optional inline chapter markers and TOC
    */
-  private formatTranscript(transcript: TranscriptLine[], includeTimestamps: boolean): string {
-    if (includeTimestamps) {
-      return transcript
-        .map(line => {
-          const totalSeconds = Math.floor(line.start);
-          const hours = Math.floor(totalSeconds / 3600);
-          const mins = Math.floor((totalSeconds % 3600) / 60);
-          const secs = totalSeconds % 60;
-          // Use h:mm:ss for videos > 1 hour, mm:ss otherwise
-          const timestamp = hours > 0
-            ? `[${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`
-            : `[${mins}:${secs.toString().padStart(2, '0')}]`;
-          return `${timestamp} ${line.text.trim()}`;
-        })
-        .filter(text => text.length > 0)
-        .join('\n');
+  private formatTranscript(transcript: TranscriptLine[], includeTimestamps: boolean, chapters: Chapter[] = []): string {
+    const nonAdChapters = chapters.filter(c => !c.isAd);
+    const hasChapters = nonAdChapters.length > 0;
+
+    // When chapters exist: chapter markers provide timestamps, no per-line timestamps needed
+    // When no chapters: use per-line timestamps if requested
+    const usePerLineTimestamps = includeTimestamps && !hasChapters;
+
+    const textParts: string[] = [];
+    let currentChunk: string[] = [];
+    let chapterIdx = 0;
+
+    for (const line of transcript) {
+      const trimmed = line.text.replace(/\n/g, ' ').trim();
+      if (!trimmed) continue;
+
+      // Insert chapter markers at their start positions
+      while (chapterIdx < nonAdChapters.length &&
+             nonAdChapters[chapterIdx].startMs / 1000 <= line.start) {
+        const ch = nonAdChapters[chapterIdx];
+        if (currentChunk.length > 0) {
+          textParts.push(currentChunk.join(usePerLineTimestamps ? '\n' : ' '));
+          currentChunk = [];
+        }
+        textParts.push(`\n--- [${formatTimestamp(ch.startMs / 1000)}] ${ch.title} ---\n`);
+        chapterIdx++;
+      }
+
+      if (usePerLineTimestamps) {
+        currentChunk.push(`[${formatTimestamp(line.start)}] ${trimmed}`);
+      } else {
+        currentChunk.push(trimmed);
+      }
     }
-    return transcript
-      .map(line => line.text.trim())
-      .filter(text => text.length > 0)
-      .join(' ');
+
+    if (currentChunk.length > 0) {
+      textParts.push(currentChunk.join(usePerLineTimestamps ? '\n' : ' '));
+    }
+    while (chapterIdx < nonAdChapters.length) {
+      const ch = nonAdChapters[chapterIdx];
+      textParts.push(`\n--- [${formatTimestamp(ch.startMs / 1000)}] ${ch.title} ---\n`);
+      chapterIdx++;
+    }
+    return textParts.join('\n');
   }
 }
 
@@ -471,7 +507,7 @@ class TranscriptServer {
 
           console.log(`Processing transcript for video: ${videoId}, lang: ${lang}, timestamps: ${include_timestamps}, strip_ads: ${strip_ads}, comments: ${include_comments}`);
 
-          const result = await this.extractor.getTranscript(videoId, lang as string, include_timestamps as boolean, strip_ads as boolean);
+          const result = await this.extractor.getTranscript(videoId, lang as string, include_timestamps as boolean, strip_ads as boolean, include_chapters as boolean);
 
           // Auto-detect live streams and redirect to live chat (uses isLive from page already fetched)
           if (result.isLive) {
@@ -520,7 +556,7 @@ class TranscriptServer {
           if (result.adsStripped > 0) {
             // Ads were filtered by chapter markers
             transcript = `[Note: ${result.adsStripped} sponsored segment lines filtered out based on chapter markers]\n\n${transcript}`;
-          } else if (strip_ads && result.adChaptersFound === 0) {
+          } else if (strip_ads && result.adChaptersFound === 0 && result.chapters.length === 0) {
             // No chapter markers found - add prompt hint as fallback
             transcript += '\n\n[Note: No chapter markers found. If summarizing, please exclude any sponsored segments or ads from the summary.]';
           }
@@ -539,15 +575,6 @@ class TranscriptServer {
             // Preserve line-delimited format for easy chunking (head/tail/Select-Object work)
             content: transcript
           };
-
-          // Add chapters to response if requested and available
-          if (include_chapters && result.chapters.length > 0) {
-            structuredResult.chapters = result.chapters.map((c: { title: string; startMs: number; isAd: boolean }) => {
-              const mins = Math.floor(c.startMs / 60000);
-              const secs = Math.floor((c.startMs % 60000) / 1000);
-              return `[${mins}:${secs.toString().padStart(2, '0')}] ${c.title}`;
-            }).join(' | ');
-          }
 
           // Add comments to response if fetched
           if (commentsText) {
