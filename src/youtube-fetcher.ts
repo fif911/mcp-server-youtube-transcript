@@ -1168,7 +1168,13 @@ export async function getLiveChat(options: {
     throw new Error(`Failed to fetch live chat: ${(err as Error).message}`);
   }
 
-  const json = JSON.parse(response);
+  let json: any;
+  try {
+    json = JSON.parse(response);
+  } catch (parseErr) {
+    console.error(`[getLiveChat] Failed to parse response as JSON: ${(parseErr as Error).message}`);
+    throw new Error(`Live chat response is not valid JSON: ${(parseErr as Error).message}`);
+  }
 
   if (json.error) {
     throw new Error(`YouTube API error: ${json.error.message || 'Unknown error'}`);

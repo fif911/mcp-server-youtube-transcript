@@ -434,9 +434,9 @@ class TranscriptServer {
           );
         }
 
-        try {
-          const videoId = this.extractor.extractYoutubeId(input);
+        const videoId = this.extractor.extractYoutubeId(input);
 
+        try {
           // comments_only mode: skip transcript, fetch comments
           // Default 500 cap; user can override via include_comments (0 = unlimited)
           if (comments_only) {
@@ -566,7 +566,6 @@ class TranscriptServer {
           if (error instanceof TranscriptFetchError && error.isLive) {
             console.log(`[auto-detect] Transcript failed for live stream, redirecting to live chat`);
             try {
-              const videoId = this.extractor.extractYoutubeId(input);
               const liveResult = await startLiveChatStream(videoId);
               return this.formatLiveChatResponse(liveResult, error.metadata);
             } catch (liveErr) {
