@@ -639,7 +639,13 @@ export async function getSubtitles(options: {
             }
           }, continuationPayload);
 
-          const contJson = JSON.parse(contResponse);
+          let contJson: any;
+          try {
+            contJson = JSON.parse(contResponse);
+          } catch (parseErr) {
+            console.error(`[getSubtitles] Failed to parse continuation response: ${(parseErr as Error).message}`);
+            break; // Fall back to segments already collected
+          }
           console.error(`[youtube-fetcher] Continuation response keys: ${JSON.stringify(Object.keys(contJson))}`);
 
           // Try to extract segments from continuation response
