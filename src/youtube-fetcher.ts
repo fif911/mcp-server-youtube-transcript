@@ -1302,13 +1302,15 @@ export async function checkIfLive(videoId: string): Promise<{
     });
 
     const isLive = html.includes('"isLiveContent":true') || html.includes('"isLive":true');
-    const titleMatch = html.match(/"title":"([^"]+)"/);
-    const authorMatch = html.match(/"author":"([^"]+)"/);
+    // Scope to videoDetails to avoid matching recommended video titles
+    const videoDetailsMatch = html.match(/"videoDetails"\s*:\s*\{[^}]*?"title":"([^"]+)"[^}]*?"author":"([^"]+)"/s);
+    const title = videoDetailsMatch?.[1] || html.match(/"title":"([^"]+)"/)?.[1];
+    const author = videoDetailsMatch?.[2] || html.match(/"author":"([^"]+)"/)?.[1];
 
     return {
       isLive,
-      title: titleMatch?.[1],
-      author: authorMatch?.[1]
+      title,
+      author
     };
   } catch {
     return { isLive: false };
