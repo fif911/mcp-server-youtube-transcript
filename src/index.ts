@@ -23,8 +23,17 @@ import {
   listActiveStreams,
   TranscriptLine,
   formatCount,
-  TranscriptFetchError
+  TranscriptFetchError,
+  stopAllStreams
 } from './youtube-fetcher.js';
+
+interface TranscriptStructuredResult {
+  [key: string]: unknown;
+  meta: string;
+  content: string;
+  chapters?: string;
+  comments?: string;
+}
 
 // Define tool configurations
 const TOOLS: Tool[] = [
@@ -365,6 +374,33 @@ class TranscriptServer {
   }
 
   /**
+   * Formats a live chat auto-detection response for structuredContent
+   */
+  private formatLiveChatResponse(
+    liveResult: { messages: LiveChatMessage[]; continuation?: string; isLive: boolean; pollIntervalMs: number },
+    metadata: { title: string; author: string }
+  ): CallToolResult {
+    const messagesFormatted = liveResult.messages.map((m: LiveChatMessage) => {
+      const prefix = m.isPaid ? `[${m.paidAmount}] ` : '';
+      return `${prefix}${m.author}: ${m.text}`;
+    }).join('\n');
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: `[LIVE STREAM DETECTED - Auto-switched to live chat with background streaming]\n\nStream: ${metadata.title || 'Unknown'}\nChannel: ${metadata.author || 'Unknown'}\n\nRecent chat:\n${messagesFormatted || '[No messages yet]'}\n\n[Use get_live_chat with stream:true to check for new messages, or stop_live_chat to stop]`
+      }],
+      structuredContent: {
+        meta: `🔴 LIVE | ${metadata.title || 'Live Stream'} | ${metadata.author || 'Unknown'} | ${liveResult.messages.length} messages | STREAMING STARTED`,
+        messages: messagesFormatted.replace(/\n/g, ' | '),
+        isLive: true,
+        streaming: true,
+        note: 'Auto-detected live stream. Background streaming started. Use get_live_chat(stream:true) for updates.'
+      }
+    };
+  }
+
+  /**
    * Handles tool call requests
    */
   private async handleToolCall(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
@@ -401,10 +437,13 @@ class TranscriptServer {
         try {
           const videoId = this.extractor.extractYoutubeId(input);
 
-          // comments_only mode: skip transcript, fetch all comments
+          // comments_only mode: skip transcript, fetch comments
+          // Default 500 cap; user can override via include_comments (0 = unlimited)
           if (comments_only) {
-            console.log(`Fetching comments ONLY for video: ${videoId}`);
-            const commentsResult = await getComments({ videoID: videoId, limit: 0 }); // 0 = no limit
+            const DEFAULT_COMMENTS_LIMIT = 500;
+            const commentsLimit = include_comments > 0 ? include_comments : DEFAULT_COMMENTS_LIMIT;
+            console.log(`Fetching comments ONLY for video: ${videoId} (limit: ${commentsLimit})`);
+            const commentsResult = await getComments({ videoID: videoId, limit: commentsLimit });
             console.log(`Fetched ${commentsResult.comments.length} comments (total: ${commentsResult.totalCount})`);
 
             // Format comments with full detail
@@ -439,24 +478,7 @@ class TranscriptServer {
             console.log(`[auto-detect] Video ${videoId} is LIVE - attempting live chat`);
             try {
               const liveResult = await startLiveChatStream(videoId);
-              const messagesFormatted = liveResult.messages.map((m: LiveChatMessage) => {
-                const prefix = m.isPaid ? `[${m.paidAmount}] ` : '';
-                return `${prefix}${m.author}: ${m.text}`;
-              }).join('\n');
-
-              return {
-                content: [{
-                  type: "text" as const,
-                  text: `[LIVE STREAM DETECTED - Auto-switched to live chat with background streaming]\n\nStream: ${result.metadata.title || 'Unknown'}\nChannel: ${result.metadata.author || 'Unknown'}\n\nRecent chat:\n${messagesFormatted || '[No messages yet]'}\n\n[Use get_live_chat with stream:true to check for new messages, or stop_live_chat to stop]`
-                }],
-                structuredContent: {
-                  meta: `🔴 LIVE | ${result.metadata.title || 'Live Stream'} | ${result.metadata.author || 'Unknown'} | ${liveResult.messages.length} messages | STREAMING STARTED`,
-                  messages: messagesFormatted.replace(/\n/g, ' | '),
-                  isLive: true,
-                  streaming: true,
-                  note: 'Auto-detected live stream. Background streaming started. Use get_live_chat(stream:true) for updates.'
-                }
-              };
+              return this.formatLiveChatResponse(liveResult, result.metadata);
             } catch (liveErr) {
               console.log(`[auto-detect] Live chat failed, falling back to transcript: ${(liveErr as Error).message}`);
             }
@@ -512,7 +534,7 @@ class TranscriptServer {
             commentCountStr = ` | ${result.metadata.commentCount} comments`;
           }
 
-          const structuredResult: any = {
+          const structuredResult: TranscriptStructuredResult = {
             meta: `${result.metadata.title} | ${result.metadata.author} | ${result.metadata.duration} | ${result.metadata.subscriberCount} subs | ${result.metadata.viewCount} views | ${result.metadata.publishDate}${commentCountStr}`,
             // Preserve line-delimited format for easy chunking (head/tail/Select-Object work)
             content: transcript
@@ -546,24 +568,7 @@ class TranscriptServer {
             try {
               const videoId = this.extractor.extractYoutubeId(input);
               const liveResult = await startLiveChatStream(videoId);
-              const messagesFormatted = liveResult.messages.map((m: LiveChatMessage) => {
-                const prefix = m.isPaid ? `[${m.paidAmount}] ` : '';
-                return `${prefix}${m.author}: ${m.text}`;
-              }).join('\n');
-
-              return {
-                content: [{
-                  type: "text" as const,
-                  text: `[LIVE STREAM DETECTED - Auto-switched to live chat with background streaming]\n\nStream: ${error.metadata.title || 'Unknown'}\nChannel: ${error.metadata.author || 'Unknown'}\n\nRecent chat:\n${messagesFormatted || '[No messages yet]'}\n\n[Use get_live_chat with stream:true to check for new messages, or stop_live_chat to stop]`
-                }],
-                structuredContent: {
-                  meta: `🔴 LIVE | ${error.metadata.title || 'Live Stream'} | ${error.metadata.author || 'Unknown'} | ${liveResult.messages.length} messages | STREAMING STARTED`,
-                  messages: messagesFormatted.replace(/\n/g, ' | '),
-                  isLive: true,
-                  streaming: true,
-                  note: 'Auto-detected live stream. Background streaming started. Use get_live_chat(stream:true) for updates.'
-                }
-              };
+              return this.formatLiveChatResponse(liveResult, error.metadata);
             } catch (liveErr) {
               console.error('Live chat fallback also failed:', liveErr);
             }
@@ -808,6 +813,7 @@ class TranscriptServer {
    */
   async stop(): Promise<void> {
     try {
+      stopAllStreams();
       await this.server.close();
     } catch (error) {
       console.error('Error while stopping server:', error);

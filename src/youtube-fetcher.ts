@@ -438,67 +438,6 @@ export async function getAvailableLanguages(videoID: string): Promise<CaptionTra
 }
 
 /**
- * Fetches just the comment count for a video without fetching all comments
- * Makes a single API call to get the count from the comments header
- */
-export async function getCommentCount(videoID: string): Promise<number> {
-  if (!videoID || typeof videoID !== 'string') {
-    throw new Error('Invalid video ID: must be a non-empty string');
-  }
-
-  const { visitorData, clientVersion } = await getPageData(videoID);
-  const continuationToken = encodeURIComponent(buildCommentsParams(videoID, 0));
-
-  const payload = JSON.stringify({
-    context: {
-      client: {
-        hl: 'en',
-        gl: 'US',
-        clientName: 'WEB',
-        clientVersion: clientVersion,
-        visitorData: visitorData
-      }
-    },
-    continuation: continuationToken
-  });
-
-  try {
-    const response = await httpsRequest({
-      hostname: 'www.youtube.com',
-      path: '/youtubei/v1/next?prettyPrint=false',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-        'User-Agent': WEB_USER_AGENT,
-        'Origin': 'https://www.youtube.com'
-      }
-    }, payload);
-
-    const json = JSON.parse(response);
-    const endpoints = json.onResponseReceivedEndpoints || [];
-
-    for (const endpoint of endpoints) {
-      const items = endpoint.reloadContinuationItemsCommand?.continuationItems ||
-                    endpoint.appendContinuationItemsAction?.continuationItems || [];
-      for (const item of items) {
-        if (item.commentsHeaderRenderer) {
-          const countText = item.commentsHeaderRenderer.countText?.runs?.[0]?.text || '';
-          const countMatch = countText.match(/[\d,]+/);
-          if (countMatch) {
-            return parseInt(countMatch[0].replace(/,/g, ''), 10);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[youtube-fetcher] Error fetching comment count:', err);
-  }
-
-  return 0;
-}
-
-/**
  * Fetches transcript using the YouTube internal API
  * If the requested language is not available and enableFallback is true,
  * it will try English first, then fall back to the first available language.
@@ -1155,8 +1094,11 @@ async function getLiveChatContinuation(videoId: string): Promise<{
   const visitorMatch = html.match(/"visitorData":"([^"]+)"/);
   const visitorData = visitorMatch?.[1] || '';
 
-  // Extract continuation token for live chat
-  const continuationMatch = html.match(/"continuation":"([^"]+)"/);
+  // Extract continuation token specifically from live chat context
+  // Try liveChatContinuation first, then liveChatRenderer, then broad fallback
+  const liveChatContMatch = html.match(/"liveChatContinuation".*?"continuation":"([^"]+)"/s);
+  const liveChatRendererMatch = html.match(/"liveChatRenderer".*?"continuation":"([^"]+)"/s);
+  const continuationMatch = liveChatContMatch || liveChatRendererMatch || html.match(/"continuation":"([^"]+)"/);
   if (!continuationMatch) {
     throw new Error('Could not find live chat continuation token. The stream may have ended.');
   }
@@ -1450,6 +1392,8 @@ export async function startLiveChatStream(videoId: string): Promise<LiveChatResu
       // Stream may have ended
       if ((err as Error).message?.includes('ended')) {
         state.isPolling = false;
+        if (state.pollTimer) clearTimeout(state.pollTimer);
+        activeStreams.delete(videoId);
         return;
       }
     }
@@ -1537,6 +1481,17 @@ export function stopLiveChatStream(videoId: string): {
     finalMessages,
     stats
   };
+}
+
+/**
+ * Stop all active streams and release resources. Call on process exit.
+ */
+export function stopAllStreams(): void {
+  for (const [, state] of activeStreams) {
+    state.isPolling = false;
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+  }
+  activeStreams.clear();
 }
 
 /**
