@@ -509,9 +509,9 @@ class TranscriptServer {
 
           const result = await this.extractor.getTranscript(videoId, lang as string, include_timestamps as boolean, strip_ads as boolean, include_chapters as boolean);
 
-          // Auto-detect live streams and redirect to live chat (uses isLive from page already fetched)
-          if (result.isLive) {
-            console.log(`[auto-detect] Video ${videoId} is LIVE - attempting live chat`);
+          // Auto-detect live streams: only redirect to live chat if no transcript was fetched
+          if (result.isLive && !result.text.trim()) {
+            console.log(`[auto-detect] Video ${videoId} is LIVE with no transcript - attempting live chat`);
             try {
               const liveResult = await startLiveChatStream(videoId);
               return this.formatLiveChatResponse(liveResult, result.metadata);

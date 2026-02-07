@@ -29,8 +29,8 @@ npx -y @smithery/cli install @kimtaeyoon83/mcp-server-youtube-transcript --clien
     - `include_timestamps` (boolean, optional, default: false): Include per-line timestamps (only when no chapters are available; chapter timestamps are always shown)
     - `strip_ads` (boolean, optional, default: true): Filter out sponsorships, ads, and promotional content based on chapter markers
     - `include_chapters` (boolean, optional, default: true): Include chapter markers inline with the transcript as section dividers with timestamps
-    - `include_comments` (number, optional, default: 0): Number of top comments to fetch (0 = disabled)
-    - `comments_only` (boolean, optional, default: false): Fetch only comments, skip transcript (defaults to 500, override with `include_comments`)
+    - `include_comments` (number, optional, default: 0): Number of top comments to fetch alongside the transcript (0 = disabled)
+    - `comments_only` (boolean, optional, default: false): Fetch only comments, skip transcript. Uses `include_comments` as the limit if set (> 0), otherwise defaults to 500
   - Auto-detects live streams and redirects to live chat with background streaming
 
 - **get_live_chat**
@@ -38,6 +38,7 @@ npx -y @smithery/cli install @kimtaeyoon83/mcp-server-youtube-transcript --clien
   - Inputs:
     - `url` (string, required): YouTube live stream URL or video ID
     - `stream` (boolean, optional, default: false): Enable background streaming mode for continuous polling
+    - `continuation` (string, optional): Continuation token for manual polling to resume from a specific chat position (non-streaming mode only)
 
 - **stop_live_chat**
   - Stop background live chat streaming for a video

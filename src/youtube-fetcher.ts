@@ -760,7 +760,13 @@ async function fetchCommentsPage(
     }
   }, payload);
 
-  const json = JSON.parse(response);
+  let json: any;
+  try {
+    json = JSON.parse(response);
+  } catch (parseErr) {
+    console.error(`[fetchCommentsPage] Failed to parse response: ${(parseErr as Error).message}`);
+    throw new Error(`Failed to parse YouTube response in fetchCommentsPage: ${(parseErr as Error).message}`);
+  }
   if (json.error) {
     throw new Error(`YouTube API error: ${json.error.message || 'Unknown error'}`);
   }
@@ -962,7 +968,7 @@ export async function getComments(options: {
 
   // Build initial comments params (0 = TOP_COMMENTS, 1 = NEWEST_FIRST)
   const sortByNum = sortBy === 'NEWEST_FIRST' ? 1 : 0;
-  let continuationToken: string | undefined = encodeURIComponent(buildCommentsParams(videoID, sortByNum));
+  let continuationToken: string | undefined = buildCommentsParams(videoID, sortByNum);
 
   const allComments: Comment[] = [];
   const allReplyTokens = new Map<string, string>();
@@ -1103,16 +1109,17 @@ async function getLiveChatContinuation(videoId: string): Promise<{
     throw new Error('Could not find live chat continuation token. The stream may have ended.');
   }
 
-  // Extract metadata
-  const titleMatch = html.match(/"title":"([^"]+)"/);
-  const authorMatch = html.match(/"author":"([^"]+)"/);
+  // Extract metadata from videoDetails context (scoped to avoid unrelated matches)
+  const videoDetailsMatch = html.match(/"videoDetails"\s*:\s*\{[^}]*?"title":"([^"]+)"[^}]*?"author":"([^"]+)"/s);
+  const title = videoDetailsMatch?.[1] || html.match(/"title":"([^"]+)"/)?.[1];
+  const author = videoDetailsMatch?.[2] || html.match(/"author":"([^"]+)"/)?.[1];
 
   return {
     continuation: continuationMatch[1],
     isLive,
     visitorData,
-    title: titleMatch?.[1],
-    author: authorMatch?.[1]
+    title,
+    author
   };
 }
 
@@ -1240,7 +1247,7 @@ export async function getLiveChat(options: {
   return {
     messages,
     continuation: nextContinuation,
-    isLive: true,
+    isLive: Boolean(nextContinuation),
     pollIntervalMs,
     videoTitle,
     channelName,
