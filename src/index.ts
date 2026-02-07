@@ -451,7 +451,7 @@ class TranscriptServer {
                 }],
                 structuredContent: {
                   meta: `🔴 LIVE | ${result.metadata.title || 'Live Stream'} | ${result.metadata.author || 'Unknown'} | ${liveResult.messages.length} messages | STREAMING STARTED`,
-                  messages: messagesFormatted,
+                  messages: messagesFormatted.replace(/\n/g, ' | '),
                   isLive: true,
                   streaming: true,
                   note: 'Auto-detected live stream. Background streaming started. Use get_live_chat(stream:true) for updates.'
@@ -558,7 +558,7 @@ class TranscriptServer {
                 }],
                 structuredContent: {
                   meta: `🔴 LIVE | ${error.metadata.title || 'Live Stream'} | ${error.metadata.author || 'Unknown'} | ${liveResult.messages.length} messages | STREAMING STARTED`,
-                  messages: messagesFormatted,
+                  messages: messagesFormatted.replace(/\n/g, ' | '),
                   isLive: true,
                   streaming: true,
                   note: 'Auto-detected live stream. Background streaming started. Use get_live_chat(stream:true) for updates.'
@@ -621,7 +621,7 @@ class TranscriptServer {
                 }],
                 structuredContent: {
                   meta: `${buffer.videoTitle || 'Live Stream'} | ${buffer.channelName || 'Unknown'} | ${buffer.messages.length} new msgs | total: ${buffer.stats.totalFetched} | streaming: ${durationStr}`,
-                  messages: messagesFormatted,
+                  messages: messagesFormatted.replace(/\n/g, ' | '),
                   streaming: buffer.isStreaming,
                   stats: buffer.stats
                 }
@@ -644,7 +644,7 @@ class TranscriptServer {
               }],
               structuredContent: {
                 meta: `${result.videoTitle || 'Live Stream'} | ${result.channelName || 'Unknown'} | ${result.messages.length} messages | poll: ${result.pollIntervalMs}ms | STREAMING STARTED`,
-                messages: messagesFormatted,
+                messages: messagesFormatted.replace(/\n/g, ' | '),
                 continuation: result.continuation,
                 pollIntervalMs: result.pollIntervalMs,
                 isLive: result.isLive,
@@ -737,7 +737,7 @@ class TranscriptServer {
             }],
             structuredContent: {
               meta: `Stream stopped | Duration: ${durationStr} | Total fetched: ${result.stats.totalFetched}`,
-              finalMessages: messagesFormatted,
+              finalMessages: messagesFormatted.replace(/\n/g, ' | '),
               stats: result.stats
             }
           };
