@@ -10,6 +10,8 @@ import {
   Tool,
   CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   getSubtitles,
   getComments,
@@ -89,6 +91,10 @@ const TOOLS: Tool[] = [
           type: "boolean",
           description: "Fetch ONLY comments (no transcript). Overrides all other flags and fetches all available comments. Default: false",
           default: false
+        },
+        output_file: {
+          type: "string",
+          description: "Save transcript to this file path instead of returning inline. Use 'auto' to save to /tmp/yt-transcripts/{video-title}.txt. Returns a short confirmation with file path and line count."
         }
       },
       required: ["url"]
@@ -449,11 +455,13 @@ class TranscriptServer {
           strip_ads = true,
           include_chapters = true,
           include_comments = 0,
-          comments_only = false
+          comments_only = false,
+          output_file
         } = args as {
           url: string; lang?: string; include_timestamps?: boolean;
           strip_ads?: boolean; include_chapters?: boolean;
           include_comments?: number; comments_only?: boolean;
+          output_file?: string;
         };
 
         if (!input || typeof input !== 'string') {
@@ -579,6 +587,54 @@ class TranscriptServer {
           // Add comments to response if fetched
           if (commentsText) {
             structuredResult.comments = commentsText;
+          }
+
+          // If output_file specified, save to file and return short confirmation
+          if (output_file) {
+            let filePath: string;
+            if (output_file === 'auto') {
+              const dir = '/tmp/yt-transcripts';
+              const sanitizedTitle = (result.metadata.title || videoId)
+                .replace(/[^a-zA-Z0-9_\-. ]/g, '_')
+                .replace(/\s+/g, '_')
+                .substring(0, 200);
+              filePath = path.join(dir, `${sanitizedTitle}.txt`);
+            } else {
+              filePath = output_file;
+            }
+
+            // Create parent directory if needed
+            const dir = path.dirname(filePath);
+            fs.mkdirSync(dir, { recursive: true });
+
+            // Build file content: metadata header + transcript + optional comments
+            let fileContent = `# ${result.metadata.title}\n`;
+            fileContent += `# ${result.metadata.author} | ${result.metadata.duration} | ${result.metadata.viewCount} views | ${result.metadata.publishDate}\n`;
+            fileContent += `# Language: ${result.actualLang} | Video ID: ${videoId}\n\n`;
+            fileContent += transcript;
+            if (commentsText) {
+              fileContent += `\n\n# --- Comments (${commentsFetched} of ${commentsTotal}) ---\n${commentsText}`;
+            }
+
+            fs.writeFileSync(filePath, fileContent, 'utf-8');
+
+            const lineCount = fileContent.split('\n').length;
+            const charCount = fileContent.length;
+            const confirmMsg = `Transcript saved to ${filePath} (${lineCount} lines, ${charCount} chars)`;
+            console.log(`[output_file] ${confirmMsg}`);
+
+            return {
+              content: [{
+                type: "text" as const,
+                text: confirmMsg
+              }],
+              structuredContent: {
+                meta: structuredResult.meta,
+                file_path: filePath,
+                line_count: lineCount,
+                char_count: charCount
+              }
+            };
           }
 
           return {
